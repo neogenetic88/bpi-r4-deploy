@@ -3,14 +3,6 @@ name: Build BPI-R4
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Target media'
-        required: true
-        default: 'sd'
-        type: choice
-        options:
-          - sd
-          - emmc
       openwrt_commit:
         description: 'OpenWrt commit hash (leave empty for latest)'
         required: false
@@ -33,6 +25,36 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Delete all existing releases and tags
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            const releases = await github.rest.repos.listReleases({
+              owner,
+              repo,
+              per_page: 100
+            });
+
+            for (const rel of releases.data) {
+              await github.rest.repos.deleteRelease({
+                owner,
+                repo,
+                release_id: rel.id
+              }).catch(e => console.log(`Failed to delete release ${rel.id}: ${e.message}`));
+
+              if (rel.tag_name) {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `tags/${rel.tag_name}`
+                }).catch(e => console.log(`Failed to delete tag ${rel.tag_name}: ${e.message}`));
+              }
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Free disk space on runner
         run: |
@@ -76,78 +98,18 @@ jobs:
             openwrt-mediatek-filogic-bananapi_bpi-r4-emmc-img.bin \
             > sha256sums
 
-      - name: Set tag and release name
-        id: vars
-        run: |
-          TARGET="${{ github.event.inputs.target }}"
-          COMMIT="${{ github.event.inputs.openwrt_commit }}"
-          if [ -n "$COMMIT" ]; then
-            echo "tag_name=bpi-r4-${TARGET}-${COMMIT}" >> "$GITHUB_OUTPUT"
-            echo "release_name=BPI-R4 ${TARGET} (${COMMIT})" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag_name=bpi-r4-${TARGET}-latest" >> "$GITHUB_OUTPUT"
-            echo "release_name=BPI-R4 ${TARGET} (latest)" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release — SD
-        if: github.event.inputs.target == 'sd'
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.vars.outputs.tag_name }}
-          name: ${{ steps.vars.outputs.release_name }}
+          tag_name: rescue-latest
+          name: BPI-R4 rescue (latest)
           body: |
-            Target: SD card
             OpenWrt commit: ${{ github.event.inputs.openwrt_commit || 'latest' }}
             mtk-openwrt-feeds commit: ${{ github.event.inputs.mtk_commit || 'latest' }}
           files: |
             openwrt/bin/targets/mediatek/filogic/openwrt-mediatek-filogic-bananapi_bpi-r4-sdcard.img.gz
-            openwrt/bin/targets/mediatek/filogic/sha256sums
-            openwrt/bin/targets/mediatek/filogic/config.buildinfo
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release — eMMC
-        if: github.event.inputs.target == 'emmc'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.vars.outputs.tag_name }}
-          name: ${{ steps.vars.outputs.release_name }}
-          body: |
-            Target: eMMC
-            OpenWrt commit: ${{ github.event.inputs.openwrt_commit || 'latest' }}
-            mtk-openwrt-feeds commit: ${{ github.event.inputs.mtk_commit || 'latest' }}
-          files: |
-            rescue/bpi-r4-rescue-sdcard.img.gz
             openwrt/bin/targets/mediatek/filogic/openwrt-mediatek-filogic-bananapi_bpi-r4-emmc-img.bin
             openwrt/bin/targets/mediatek/filogic/sha256sums
             openwrt/bin/targets/mediatek/filogic/config.buildinfo
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Delete older releases (keep latest)
-        if: github.event.inputs.openwrt_commit == ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const target = "${{ github.event.inputs.target }}";
-            const tagName = `bpi-r4-${target}-latest`;
-
-            const releases = await github.rest.repos.listReleases({
-              owner,
-              repo,
-              per_page: 100
-            });
-
-            const filtered = releases.data.filter(rel => rel.tag_name === tagName);
-            filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-            for (const rel of filtered.slice(1)) {
-              await github.rest.repos.deleteRelease({
-                owner,
-                repo,
-                release_id: rel.id
-              }).catch(e => console.log(`Failed to delete release ${rel.id}: ${e.message}`));
-            }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
